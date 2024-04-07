@@ -23,19 +23,16 @@
  */
 
 #include <string.h>
-#include "esp_log.h"
 #include "i2c_bus.h"
 #include "es8388.h"
-#include "board.h"
-#include "audio_volume.h"
 
 #ifdef CONFIG_ESP_LYRAT_V4_3_BOARD
-#include "headphone_detect.h"
+// #include "headphone_detect.h"
 #endif
 
 static const char *ES_TAG = "ES8388_DRIVER";
 static i2c_bus_handle_t i2c_handle;
-static codec_dac_volume_config_t *dac_vol_handle;
+static int dac_power = 0x3c;
 
 #define ES8388_DAC_VOL_CFG_DEFAULT() {                      \
     .max_dac_volume = 0,                                    \
@@ -48,12 +45,6 @@ static codec_dac_volume_config_t *dac_vol_handle;
     .user_volume = 0,                                       \
     .offset_conv_volume = NULL,                             \
 }
-
-#define ES_ASSERT(a, format, b, ...) \
-    if ((a) != 0) { \
-        ESP_LOGE(ES_TAG, format, ##__VA_ARGS__); \
-        return b;\
-    }
 
 audio_hal_func_t AUDIO_CODEC_ES8388_DEFAULT_HANDLE = {
     .audio_codec_initialize = es8388_init,
@@ -78,19 +69,9 @@ static esp_err_t es_read_reg(uint8_t reg_add, uint8_t *p_data)
     return i2c_bus_read_bytes(i2c_handle, ES8388_ADDR, &reg_add, sizeof(reg_add), p_data, 1);
 }
 
-static int i2c_init()
+static void i2c_init()
 {
-    int res;
-    i2c_config_t es_i2c_cfg = {
-        .mode = I2C_MODE_MASTER,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 100000
-    };
-    res = get_i2c_pins(I2C_NUM_0, &es_i2c_cfg);
-    ES_ASSERT(res, "getting i2c pins error", -1);
-    i2c_handle = i2c_bus_create(I2C_NUM_0, &es_i2c_cfg);
-    return res;
+    i2c_bus_create();
 }
 
 void es8388_read_all()
@@ -98,7 +79,6 @@ void es8388_read_all()
     for (int i = 0; i < 50; i++) {
         uint8_t reg = 0;
         es_read_reg(i, &reg);
-        ESP_LOGI(ES_TAG, "%x: %x", i, reg);
     }
 }
 
@@ -122,7 +102,7 @@ static int es8388_set_adc_dac_volume(int mode, int volume, int dot)
 {
     int res = 0;
     if ( volume < -96 || volume > 0 ) {
-        ESP_LOGW(ES_TAG, "Warning: volume < -96! or > 0!\n");
+        // Serial.printf("Warning: volume < -96! or > 0!\n");
         if (volume < -96)
             volume = -96;
         else
@@ -178,7 +158,7 @@ esp_err_t es8388_start(es_module_t mode)
     if (mode == ES_MODULE_DAC || mode == ES_MODULE_ADC_DAC || mode == ES_MODULE_LINE) {
         res |= es_write_reg(ES8388_ADDR, ES8388_DACPOWER, 0x3c);   //power up dac and line out
         res |= es8388_set_voice_mute(false);
-        ESP_LOGD(ES_TAG, "es8388_start default is mode:%d", mode);
+        // Serial.printf("es8388_start default is mode:%d\n", mode);
     }
 
     return res;
@@ -247,12 +227,11 @@ esp_err_t es8388_deinit(void)
 {
     int res = 0;
     res = es_write_reg(ES8388_ADDR, ES8388_CHIPPOWER, 0xFF);  //reset and stop es8388
-    i2c_bus_delete(i2c_handle);
+    i2c_bus_delete();
 #ifdef CONFIG_ESP_LYRAT_V4_3_BOARD
     headphone_detect_deinit();
 #endif
 
-    audio_codec_volume_deinit(dac_vol_handle);
     return res;
 }
 
@@ -268,7 +247,7 @@ esp_err_t es8388_init(audio_hal_codec_config_t *cfg)
     headphone_detect_init(get_headphone_detect_gpio());
 #endif
 
-    res = i2c_init(); // ESP32 in master mode
+    i2c_init(); // ESP32 in master mode
 
     res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL3, 0x04);  // 0x04 mute/0x00 unmute&ramp;DAC unmute and  disabled digital volume control soft ramp
     /* Chip Control and Power Management */
@@ -326,21 +305,8 @@ esp_err_t es8388_init(audio_hal_codec_config_t *cfg)
     //ALC for Microphone
     res |= es8388_set_adc_dac_volume(ES_MODULE_ADC, 0, 0);      // 0db
     res |= es_write_reg(ES8388_ADDR, ES8388_ADCPOWER, 0x09);    // Power on ADC, enable LIN&RIN, power off MICBIAS, and set int1lp to low power mode
-    
-    /* es8388 PA gpio_config */
-    gpio_config_t  io_conf;
-    memset(&io_conf, 0, sizeof(io_conf));
-    io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = BIT64(get_pa_enable_gpio());
-    io_conf.pull_down_en = 0;
-    io_conf.pull_up_en = 0;
-    gpio_config(&io_conf);
-    /* enable es8388 PA */
-    es8388_pa_power(true);
 
-    codec_dac_volume_config_t vol_cfg = ES8388_DAC_VOL_CFG_DEFAULT();
-    dac_vol_handle = audio_codec_volume_init(&vol_cfg);
-    ESP_LOGI(ES_TAG, "init,out:%02x, in:%02x", cfg->dac_output, cfg->adc_input);
+    // Serial.printf("init,out:%02x, in:%02x\n", cfg->dac_output, cfg->adc_input);
     return res;
 }
 
@@ -385,13 +351,19 @@ esp_err_t es8388_config_fmt(es_module_t mode, es_i2s_fmt_t fmt)
  */
 esp_err_t es8388_set_voice_volume(int volume)
 {
+    // Serial.printf("es8388_set_voice_volume (HACK 1): %d\n", volume);
     esp_err_t res = ESP_OK;
-    uint8_t reg = 0;
-    reg = audio_codec_get_dac_reg_value(dac_vol_handle, volume);
-    res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL5, reg);
-    res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL4, reg);
-    ESP_LOGD(ES_TAG, "Set volume:%.2d reg_value:0x%.2x dB:%.1f", (int)dac_vol_handle->user_volume, reg,
-            audio_codec_cal_dac_volume(dac_vol_handle));
+    if (volume < 0) volume = 0;
+    else if (volume > 100) volume = 100;
+    volume /= 3;
+    res = es_write_reg(ES8388_ADDR, ES8388_DACCONTROL4, 0);
+    res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL5, 0);
+    // LOUT1 RLOUT1 volume: dataheet says only 6 bits
+    res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL24, volume);
+    res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL25, volume);
+    // DAC LDACVOL RDACVOL default 0 = 0DB; Default value 192 = – -96 dB
+    res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL26, volume);
+    res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL27, volume);
     return res;
 }
 
@@ -399,18 +371,21 @@ esp_err_t es8388_get_voice_volume(int *volume)
 {
     esp_err_t res = ESP_OK;
     uint8_t reg = 0;
-    res = es_read_reg(ES8388_DACCONTROL4, &reg);
-    if (res == ESP_FAIL) {
+    res = es_read_reg(ES8388_DACCONTROL24, &reg);
+    if (res == ESP_FAIL)
+    {
         *volume = 0;
-    } else {
-        if (reg == dac_vol_handle->reg_value) {
-            *volume = dac_vol_handle->user_volume;
-        } else {
-            *volume = 0;
-            res = ESP_FAIL;
+    }else
+    {
+        *volume = reg;
+        *volume *= 3;
+        if (*volume == 99)
+        {
+            *volume = 100;
         }
     }
-    ESP_LOGD(ES_TAG, "Get volume:%.2d reg_value:0x%.2x", *volume, reg);
+    return res;
+    // Serial.printf("Get volume:%.2d reg_value:0x%.2x\n", *volume, reg);
     return res;
 }
 
@@ -542,14 +517,14 @@ int es8388_ctrl_state(audio_hal_codec_mode_t mode, audio_hal_ctrl_t ctrl_state)
             break;
         default:
             es_mode_t = ES_MODULE_DAC;
-            ESP_LOGW(ES_TAG, "Codec mode not support, default is decode mode");
+            // Serial.printf("Codec mode not support, default is decode mode\n");
             break;
     }
     if (AUDIO_HAL_CTRL_STOP == ctrl_state) {
         res = es8388_stop(es_mode_t);
     } else {
         res = es8388_start(es_mode_t);
-        ESP_LOGD(ES_TAG, "start default is decode mode:%d", es_mode_t);
+        // Serial.printf("start default is decode mode:%d\n", es_mode_t);
     }
     return res;
 }
@@ -573,10 +548,10 @@ esp_err_t es8388_config_i2s(audio_hal_codec_mode_t mode, audio_hal_codec_i2s_ifa
 esp_err_t es8388_pa_power(bool enable)
 {
     esp_err_t res = ESP_OK;
-    if (enable) {
-        res = gpio_set_level(get_pa_enable_gpio(), 1);
-    } else {
-        res = gpio_set_level(get_pa_enable_gpio(), 0);
-    }
+    // if (enable) {
+    //     res = gpio_set_level(get_pa_enable_gpio(), 1);
+    // } else {
+    //     res = gpio_set_level(get_pa_enable_gpio(), 0);
+    // }
     return res;
 }

@@ -25,9 +25,9 @@
 #ifndef __ES8388_H__
 #define __ES8388_H__
 
-#include "esp_types.h"
+#include "types.h"
 #include "audio_hal.h"
-#include "driver/i2c.h"
+#include "i2c_bus.h"
 #include "esxxx_common.h"
 
 #ifdef __cplusplus

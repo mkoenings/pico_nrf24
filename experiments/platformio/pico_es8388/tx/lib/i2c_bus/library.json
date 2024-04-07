@@ -1,0 +1,19 @@
+{
+    "name": "i2c_bus",
+    "version": "1.0.0",
+    "description": "i2c wrapper",
+    "keywords": "i2c, bus",
+    "authors":
+    [
+      {
+        "name": "Emir Nukic",
+        "email": "nukic.emir.1@gmail.com",
+        "url": "https://www.upwork.com/freelancers/~01e8cfa0a8730af727"
+      }
+    ],
+    "license": "MIT",
+    "dependencies": {
+    },
+    "frameworks": "*",
+    "platforms": "*"
+  }

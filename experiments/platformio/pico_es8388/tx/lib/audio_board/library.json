@@ -1,0 +1,19 @@
+{
+    "name": "audioboard",
+    "version": "1.0.0",
+    "description": "audio board driver",
+    "keywords": "audioboard, es8388",
+    "authors":
+    [
+      {
+        "name": "Emir Nukic",
+        "email": "nukic.emir.1@gmail.com",
+        "url": "https://www.upwork.com/freelancers/~01e8cfa0a8730af727"
+      }
+    ],
+    "license": "MIT",
+    "dependencies": {
+    },
+    "frameworks": "*",
+    "platforms": "*"
+  }
